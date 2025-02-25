@@ -1,0 +1,69 @@
+
+name: QUIC Interop QuicTLS
+
+on: [ workflow_dispatch ]
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        id: push
+        env:
+          DOCKER_BUILD_RECORD_RETENTION_DAYS: 1
+        uses: docker/build-push-action@v6
+        with:
+          context: https://github.com/chipitsine/haproxy-qns.git
+          push: true
+          tags: ghcr.io/${{ github.repository }}:quictls
+
+  run:
+    needs: build
+    strategy:
+      matrix:
+        suite: [
+          { client: ngtcp2, tests: "goodput,crosstraffic" }
+        ]
+      fail-fast: false
+
+    name: ${{ matrix.suite.client }}
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install tshark
+        run: |
+          sudo apt-get update
+          sudo apt-get -y install tshark
+
+      - name: Pull image
+        run: |
+          docker pull ghcr.io/${{ github.repository }}:quictls
+
+      - name: Run
+        run: |
+          git clone https://github.com/quic-interop/quic-interop-runner
+          cd quic-interop-runner
+          pip install -r requirements.txt --break-system-packages
+          python run.py -j result.json -l logs -r haproxy=ghcr.io/${{ github.repository }}:quictls -t ${{ matrix.suite.tests }} -c ${{ matrix.suite.client }} -s haproxy
